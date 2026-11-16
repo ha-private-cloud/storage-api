@@ -42,7 +42,7 @@ class UploadCreate(BaseModel):
 
 
 def _error(exc: LibraryError) -> JSONResponse:
-    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    return JSONResponse({"detail": exc.detail, **exc.extra}, status_code=exc.status_code)
 
 
 async def _folder_listing(db, unlocked, folder: Node | None) -> dict:
@@ -140,6 +140,10 @@ async def update_node(node_id: str, body: NodeUpdate, unlocked: UnlockedDep, db:
             if node.kind == "folder" and await library.is_descendant(db, target_parent, node.id):
                 raise LibraryError(400, "cannot_move_into_itself")
         name = library.clean_name(body.name) if body.name is not None else unlocked.cipher.decrypt_name(node.id, node.encrypted_name)
+        if node.kind == "file":
+            await library.check_type(db, target_parent, name, node.mime_type)
+        elif moving:
+            await library.check_subtree_type(db, node, target_parent, unlocked.cipher)
         await library.ensure_unique(db, unlocked.user_id, target_parent, name, unlocked.cipher, ignore_id=node.id)
     except LibraryError as exc:
         return _error(exc)
@@ -224,6 +228,7 @@ async def start_upload(body: UploadCreate, unlocked: UnlockedDep, db: DbDep, set
     try:
         name = library.clean_name(body.name)
         await library.get_folder(db, unlocked.user_id, body.parent_id)
+        await library.check_type(db, body.parent_id, name, body.mime_type)
         await library.ensure_unique(db, unlocked.user_id, body.parent_id, name, unlocked.cipher)
         await _quota_check(db, unlocked, body.size)
     except LibraryError as exc:

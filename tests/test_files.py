@@ -215,3 +215,72 @@ async def test_folder_tree_lists_every_visible_folder_by_path(alice):
     await alice.delete(f"/api/v1/nodes/{binned['id']}")
     paths = [i["path"] for i in (await alice.get("/api/v1/folder-tree")).json()["items"]]
     assert paths == ["Documents", "Music", "Photos", "Videos", "Work", "Work/2026"]
+
+
+async def section_id(client, section):
+    return (await client.get(f"/api/v1/sections/{section}")).json()["folder"]["id"]
+
+
+@pytest.mark.parametrize(
+    ("section", "name", "mime", "allowed"),
+    [
+        ("photos", "beach.jpg", "image/jpeg", True),
+        ("photos", "scan.HEIC", "image/heic", True),
+        ("photos", "notes.txt", "text/plain", False),
+        ("photos", "fake.jpg", "application/x-msdownload", False),
+        ("videos", "clip.mp4", "video/mp4", True),
+        ("videos", "song.mp3", "audio/mpeg", False),
+        ("music", "song.flac", "audio/flac", True),
+        ("music", "clip.mov", "video/quicktime", False),
+        ("documents", "report.pdf", "application/pdf", True),
+        ("documents", "sheet.xlsx", "application/octet-stream", True),
+        ("documents", "beach.png", "image/png", False),
+        ("documents", "tool.exe", "application/octet-stream", False),
+    ],
+)
+async def test_default_folders_only_accept_their_kind_of_file(alice, section, name, mime, allowed):
+    response = await alice.post(
+        "/api/v1/uploads", json={"parent_id": await section_id(alice, section), "name": name, "size": 4, "mime_type": mime}
+    )
+    if allowed:
+        assert response.status_code == 201
+    else:
+        assert response.status_code == 400
+        assert response.json() == {"detail": "wrong_type", "section": section}
+
+
+async def test_subfolders_of_a_default_folder_follow_its_rule(alice):
+    trips = (await alice.post("/api/v1/folders", json={"name": "Trips", "parent_id": await section_id(alice, "photos")})).json()
+    bad = await alice.post("/api/v1/uploads", json={"parent_id": trips["id"], "name": "itinerary.pdf", "size": 4})
+    assert bad.json()["detail"] == "wrong_type"
+    good = await alice.post("/api/v1/uploads", json={"parent_id": trips["id"], "name": "sunset.png", "size": 4, "mime_type": "image/png"})
+    assert good.status_code == 201
+
+
+async def test_files_cannot_be_moved_into_the_wrong_default_folder(alice):
+    doc = await upload(alice, "letter.pdf", b"pdf", mime="application/pdf")
+    response = await alice.patch(f"/api/v1/nodes/{doc['id']}", json={"parent_id": await section_id(alice, "photos")})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "wrong_type"
+    moved = await alice.patch(f"/api/v1/nodes/{doc['id']}", json={"parent_id": await section_id(alice, "documents")})
+    assert moved.status_code == 200
+
+
+async def test_a_folder_with_mismatched_contents_cannot_be_moved_in(alice):
+    mixed = (await alice.post("/api/v1/folders", json={"name": "Mixed"})).json()
+    await upload(alice, "pic.png", b"png", parent_id=mixed["id"], mime="image/png")
+    await upload(alice, "notes.txt", b"txt", parent_id=mixed["id"], mime="text/plain")
+    response = await alice.patch(f"/api/v1/nodes/{mixed['id']}", json={"parent_id": await section_id(alice, "photos")})
+    assert response.json()["detail"] == "wrong_type"
+
+
+async def test_renaming_cannot_sneak_the_wrong_type_into_a_default_folder(alice):
+    pic = await upload(alice, "pic.png", b"png", parent_id=await section_id(alice, "photos"), mime="image/png")
+    response = await alice.patch(f"/api/v1/nodes/{pic['id']}", json={"name": "pic.exe"})
+    assert response.json()["detail"] == "wrong_type"
+    assert (await alice.patch(f"/api/v1/nodes/{pic['id']}", json={"name": "holiday.png"})).status_code == 200
+
+
+async def test_anything_goes_outside_the_default_folders(alice):
+    response = await alice.post("/api/v1/uploads", json={"name": "tool.exe", "size": 4})
+    assert response.status_code == 201
