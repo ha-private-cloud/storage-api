@@ -11,11 +11,25 @@ MAX_NAME_LENGTH = 255
 STALE_UPLOAD_AGE = timedelta(days=2)
 
 
+SECTION_EXTENSIONS = {
+    "photos": frozenset("jpg jpeg png gif webp heic heif avif bmp tif tiff dng".split()),
+    "videos": frozenset("mp4 m4v mov webm mkv avi wmv mpg mpeg 3gp".split()),
+    "music": frozenset("mp3 m4a aac flac wav ogg oga opus wma aif aiff".split()),
+    "documents": frozenset(
+        "pdf txt md rtf doc docx odt xls xlsx ods csv ppt pptx odp pages numbers key epub json xml".split()
+    ),
+}
+SECTION_MIME_PREFIX = {"photos": "image/", "videos": "video/", "music": "audio/"}
+MEDIA_MIME_PREFIXES = ("image/", "video/", "audio/")
+GENERIC_MIME_TYPES = ("", "application/octet-stream")
+
+
 class LibraryError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
+    def __init__(self, status_code: int, detail: str, **extra) -> None:
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+        self.extra = extra
 
 
 def clean_name(name: str) -> str:
@@ -25,6 +39,50 @@ def clean_name(name: str) -> str:
     if "/" in name or "\\" in name or any(ord(ch) < 32 for ch in name):
         raise LibraryError(400, "invalid_name")
     return name
+
+
+def type_allowed(section: str, name: str, mime: str | None) -> bool:
+    extension = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if extension not in SECTION_EXTENSIONS[section]:
+        return False
+    mime = (mime or "").lower()
+    if mime in GENERIC_MIME_TYPES:
+        return True
+    if section in SECTION_MIME_PREFIX:
+        return mime.startswith(SECTION_MIME_PREFIX[section])
+    return not mime.startswith(MEDIA_MIME_PREFIXES)
+
+
+async def section_of(db: AsyncSession, folder_id: str | None) -> str | None:
+    """The default folder a location sits inside, if any; its rule also covers every subfolder."""
+    while folder_id is not None:
+        folder = await db.get(Node, folder_id)
+        if folder is None:
+            return None
+        if folder.section is not None:
+            return folder.section
+        folder_id = folder.parent_id
+    return None
+
+
+async def check_type(db: AsyncSession, parent_id: str | None, name: str, mime: str | None) -> None:
+    section = await section_of(db, parent_id)
+    if section is not None and not type_allowed(section, name, mime):
+        raise LibraryError(400, "wrong_type", section=section)
+
+
+async def check_subtree_type(db: AsyncSession, folder: Node, parent_id: str | None, cipher: UserCipher) -> None:
+    section = await section_of(db, parent_id)
+    if section is None:
+        return
+    pending = [folder]
+    while pending:
+        current = pending.pop()
+        for child in await children(db, current.user_id, current.id):
+            if child.kind == "folder":
+                pending.append(child)
+            elif not type_allowed(section, cipher.decrypt_name(child.id, child.encrypted_name), child.mime_type):
+                raise LibraryError(400, "wrong_type", section=section)
 
 
 def serialize(node: Node, cipher: UserCipher) -> dict:
