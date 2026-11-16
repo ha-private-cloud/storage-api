@@ -1,0 +1,42 @@
+services:
+  storage-api:
+    container_name: storage-api
+    build:
+      context: ./storage-api
+      dockerfile: Dockerfile.dev
+    restart: on-failure
+    ports:
+      - "127.0.0.1:9084:8000"
+    environment:
+      STORAGE_API_ENVIRONMENT: dev
+      STORAGE_API_DATABASE_URL: sqlite+aiosqlite:////data/dev.db
+      STORAGE_API_REDIS_URL: redis://storage-api-redis:6379/0
+      STORAGE_API_DATA_DIR: /data/files
+      STORAGE_API_AUTH_API_INTERNAL_URL: http://auth-api:8000
+      STORAGE_API_SERVICE_TOKEN: dev-storage-token
+      STORAGE_API_KEY_PEPPER: dev-key-pepper
+      STORAGE_API_KEY_CACHE_SECRET: dev-key-cache-secret
+    volumes:
+      - ./storage-api/app:/app/app:ro
+      - storage-api-dev-data:/data
+    depends_on:
+      - storage-api-redis
+      - auth-api
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  storage-api-redis:
+    container_name: storage-api-redis
+    image: redis:7-alpine
+    restart: on-failure
+
+volumes:
+  storage-api-dev-data:
