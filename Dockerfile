@@ -11,7 +11,7 @@ RUN uv sync --locked --no-install-project --no-dev
 COPY app ./app
 RUN uv sync --locked --no-dev
 
-FROM python:3.13-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
