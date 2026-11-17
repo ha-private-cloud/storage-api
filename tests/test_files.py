@@ -175,6 +175,35 @@ async def test_sections_list_their_default_folder(alice):
     assert (await alice.get("/api/v1/sections/nope")).status_code == 404
 
 
+async def test_sections_list_matching_files_from_every_folder(alice):
+    photos = (await root_items(alice))["Photos"]
+    trips = (await alice.post("/api/v1/folders", json={"name": "Trips", "parent_id": photos["id"]})).json()
+    work = (await alice.post("/api/v1/folders", json={"name": "Work"})).json()
+    await upload(alice, "beach.jpg", b"jpeg", parent_id=photos["id"], mime="image/jpeg")
+    await upload(alice, "desk.png", b"png", parent_id=work["id"], mime="image/png")
+    await upload(alice, "notes.txt", b"text", parent_id=work["id"], mime="text/plain")
+    await upload(alice, "root.gif", b"gif", mime="image/gif")
+
+    items = (await alice.get("/api/v1/sections/photos")).json()["items"]
+
+    assert [i["name"] for i in items] == ["Trips", "beach.jpg", "desk.png", "root.gif"]
+    locations = {i["name"]: [c["name"] for c in i["location"]] for i in items if i["kind"] == "file"}
+    assert locations == {"beach.jpg": ["Photos"], "desk.png": ["Work"], "root.gif": []}
+    assert next(i for i in items if i["name"] == "Trips")["id"] == trips["id"]
+
+
+async def test_search_results_say_which_folder_they_are_in(alice):
+    work = (await alice.post("/api/v1/folders", json={"name": "Work"})).json()
+    year = (await alice.post("/api/v1/folders", json={"name": "2026", "parent_id": work["id"]})).json()
+    await upload(alice, "plan.txt", b"a", parent_id=year["id"])
+    await upload(alice, "plan-old.txt", b"b")
+    found = (await alice.get("/api/v1/search", params={"q": "plan"})).json()["items"]
+    assert {i["name"]: i["location"] for i in found} == {
+        "plan.txt": [{"id": work["id"], "name": "Work"}, {"id": year["id"], "name": "2026"}],
+        "plan-old.txt": [],
+    }
+
+
 async def test_search_finds_files_in_any_folder(alice):
     work = (await alice.post("/api/v1/folders", json={"name": "Work"})).json()
     await upload(alice, "Quarterly Report.pdf", b"pdf", parent_id=work["id"])
@@ -206,6 +235,20 @@ async def test_only_media_is_shown_inline_and_everything_is_sandboxed(alice, nam
     assert response.headers["content-type"].startswith(mime if inline else "application/octet-stream")
     assert response.headers["content-security-policy"].startswith("sandbox")
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_pdfs_are_shown_inline_in_a_same_origin_frame_only(alice):
+    node = await upload(alice, "report.pdf", b"%PDF-1.4", mime="application/pdf")
+    response = await alice.get(f"/api/v1/files/{node['id']}/content")
+    assert response.headers["content-disposition"].startswith("inline")
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-security-policy"] == "frame-ancestors 'self'"
+    assert response.headers["x-frame-options"] == "SAMEORIGIN"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+    downloaded = await alice.get(f"/api/v1/files/{node['id']}/content", params={"download": "true"})
+    assert downloaded.headers["content-disposition"].startswith("attachment")
+    assert downloaded.headers["content-security-policy"].startswith("sandbox")
 
 
 async def test_folder_tree_lists_every_visible_folder_by_path(alice):
