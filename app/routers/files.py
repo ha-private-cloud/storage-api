@@ -21,6 +21,7 @@ SECTIONS = ("photos", "videos", "music", "documents")
 RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 INLINE_TYPES = re.compile(r"^(image/(png|jpeg|gif|webp|avif|bmp)|video/[a-z0-9.+-]+|audio/[a-z0-9.+-]+)$")
 CONTENT_POLICY = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'"
+PDF_POLICY = "frame-ancestors 'self'"
 MAX_MIME_LENGTH = 255
 
 
@@ -81,7 +82,15 @@ async def list_section(section: str, unlocked: UnlockedDep, db: DbDep):
     folder = await db.scalar(select(Node).where(Node.user_id == unlocked.user_id, Node.section == section))
     if folder is None:
         return JSONResponse({"detail": "not_found"}, status_code=404)
-    return await _folder_listing(db, unlocked, folder)
+    listing = await _folder_listing(db, unlocked, folder)
+    nodes = await library.visible_nodes(db, unlocked.user_id)
+    matching = [
+        n for n in nodes
+        if n.kind == "file" and library.type_allowed(section, unlocked.cipher.decrypt_name(n.id, n.encrypted_name), n.mime_type)
+    ]
+    subfolders = [i for i in listing["items"] if i["kind"] == "folder"]
+    listing["items"] = library.sort_items(subfolders + library.with_locations(nodes, matching, unlocked.cipher))
+    return listing
 
 
 @router.get("/folder-tree")
@@ -104,12 +113,9 @@ async def folder_tree(unlocked: UnlockedDep, db: DbDep) -> dict:
 @router.get("/search")
 async def search(unlocked: UnlockedDep, db: DbDep, q: Annotated[str, Query(min_length=1, max_length=255)]) -> dict:
     wanted = q.casefold()
-    matches = []
-    for node in await library.visible_nodes(db, unlocked.user_id):
-        item = library.serialize(node, unlocked.cipher)
-        if wanted in item["name"].casefold():
-            matches.append(item)
-    return {"items": library.sort_items(matches)}
+    nodes = await library.visible_nodes(db, unlocked.user_id)
+    matches = [n for n in nodes if wanted in unlocked.cipher.decrypt_name(n.id, n.encrypted_name).casefold()]
+    return {"items": library.sort_items(library.with_locations(nodes, matches, unlocked.cipher))}
 
 
 @router.post("/folders", status_code=status.HTTP_201_CREATED)
@@ -390,15 +396,18 @@ async def file_content(
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
 
     name = unlocked.cipher.decrypt_name(node.id, node.encrypted_name)
-    inline = not download and bool(INLINE_TYPES.match(node.mime_type or ""))
+    pdf = not download and node.mime_type == "application/pdf"
+    inline = pdf or (not download and bool(INLINE_TYPES.match(node.mime_type or "")))
     media_type = node.mime_type if inline else "application/octet-stream"
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(name)}",
-        "Content-Security-Policy": CONTENT_POLICY,
+        "Content-Security-Policy": PDF_POLICY if pdf else CONTENT_POLICY,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
     }
+    if pdf:
+        headers["X-Frame-Options"] = "SAMEORIGIN"
     if node.size_bytes == 0:
         return Response(b"", media_type=media_type, headers=headers)
     start, end = requested or (0, node.size_bytes - 1)

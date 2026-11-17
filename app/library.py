@@ -188,6 +188,22 @@ async def visible_nodes(db: AsyncSession, user_id: str) -> list[Node]:
     return [n for n in nodes if visible(n)]
 
 
+def with_locations(nodes: list[Node], wanted: list[Node], cipher: UserCipher) -> list[dict]:
+    folders = {n.id: n for n in nodes if n.kind == "folder"}
+    names: dict[str, str] = {}
+
+    def location(parent_id: str | None) -> list[dict]:
+        path = []
+        while parent_id is not None and parent_id in folders:
+            if parent_id not in names:
+                names[parent_id] = cipher.decrypt_name(parent_id, folders[parent_id].encrypted_name)
+            path.append({"id": parent_id, "name": names[parent_id]})
+            parent_id = folders[parent_id].parent_id
+        return list(reversed(path))
+
+    return [{**serialize(n, cipher), "location": location(n.parent_id)} for n in wanted]
+
+
 async def delete_permanently(db: AsyncSession, blobs: BlobStore, node: Node) -> None:
     pending = [node]
     while pending:
