@@ -11,7 +11,7 @@ from app.blobstore import BlobStore
 from app.cache import UnlockedKeys, build_client
 from app.config import Settings, get_settings
 from app.db import build_engine, build_sessionmaker, create_schema
-from app.routers import files, health, vault
+from app.routers import admin, files, health, vault
 from app.sessions import SessionVerifier
 
 logger = logging.getLogger("storage-api")
@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
     application.include_router(health.router)
     application.include_router(vault.router)
     application.include_router(files.router)
+    application.include_router(admin.router)
     return application
 
 

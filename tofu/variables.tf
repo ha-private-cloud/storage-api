@@ -67,7 +67,7 @@ variable "data_storage_size" {
 variable "default_quota_bytes" {
   description = "Storage allowance for each new user."
   type        = number
-  default     = 21474836480
+  default     = 10737418240
 }
 
 variable "postgres_image" {

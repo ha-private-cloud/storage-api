@@ -12,6 +12,7 @@ class SessionUser:
     user_id: str
     username: str
     session_token: str
+    groups: tuple[str, ...] = ()
 
 
 class SessionVerifier:
@@ -39,6 +40,11 @@ class SessionVerifier:
             self._recent.pop(key, None)
             return None
         body = response.json()
-        user = SessionUser(user_id=body["sub"], username=body["preferred_username"], session_token=session_token)
+        user = SessionUser(
+            user_id=body["sub"],
+            username=body["preferred_username"],
+            session_token=session_token,
+            groups=tuple(body.get("groups") or ()),
+        )
         self._recent[key] = (time.monotonic() + self._settings.session_check_seconds, user)
         return user
