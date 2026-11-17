@@ -50,6 +50,14 @@ async def require_user(request: Request, settings: SettingsDep) -> SessionUser:
 
 UserDep = Annotated[SessionUser, Depends(require_user)]
 
+ADMIN_GROUPS = ("cluster-admins", "admin")
+
+
+async def require_admin_user(user: UserDep) -> SessionUser:
+    if not any(group in ADMIN_GROUPS for group in user.groups):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "admin_only")
+    return user
+
 
 class Unlocked:
     def __init__(self, user: SessionUser, vault: Vault, cipher: UserCipher) -> None:
