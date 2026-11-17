@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     argon2_memory_cost: int = 64 * 1024
     argon2_parallelism: int = 4
 
-    default_quota_bytes: int = 20 * 1024**3
+    default_quota_bytes: int = 10 * 1024**3
     chunk_size: int = 8 * 1024 * 1024
     segment_size: int = 1024 * 1024
     trash_retention_days: int = 30

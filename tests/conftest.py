@@ -20,6 +20,7 @@ class FakeSessions:
             "alice-session": SessionUser("user-alice", "alice", "alice-session"),
             "alice-second-session": SessionUser("user-alice", "alice", "alice-second-session"),
             "bob-session": SessionUser("user-bob", "bob", "bob-session"),
+            "admin-session": SessionUser("user-admin", "admin", "admin-session", ("admin",)),
         }
 
     async def verify(self, token: str) -> SessionUser | None:
